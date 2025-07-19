@@ -17,8 +17,8 @@ app.get("/ping", (req, res) => {
 // פונקציה לפיצול טקסט לפי סימני פיסוק
 function splitTextByPunctuation(text) {
   return text
-    .split(/(?<=[,\.\!?])\s+/)
-    .map(t => t.trim())
+    .split(/(?<=[!?])\s+/) // שומר רק סימני קריאה ושאלה לפיצול
+    .map(t => t.trim().replace(/[.,]/g, "")) // מסיר נקודות ופסיקים
     .filter(Boolean);
 }
 
