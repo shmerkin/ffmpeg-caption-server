@@ -109,7 +109,7 @@ app.post("/burn-subtitles", async (req, res) => {
     ]);
 
     const fontName = fontPath.split("/").pop().replace(".ttf", "");
-    const defaultStyle = `FontName=${fontName},FontSize=28,PrimaryColour=&H00E0E0E0,Outline=2,OutlineColour=&H00000000,Shadow=1,BackColour=&H80000000,BorderStyle=1,MarginV=60,Alignment=2`;
+    const defaultStyle = `FontName=${fontName},FontSize=28,PrimaryColour=&H00E0E0E0,Outline=2,OutlineColour=&H00000000,Shadow=1,BackColour=&H80000000,BorderStyle=1,MarginV=60,MarginL=40,MarginR=40,Alignment=2`;
     const styleParams = style || defaultStyle;
 
     const cmd = `ffmpeg -i ${videoPath} -vf "subtitles=${srtPath}:force_style='${styleParams}'" -c:a copy ${outputPath}`;
