@@ -4,7 +4,6 @@ const fs = require("fs");
 const { exec } = require("child_process");
 const { v4: uuidv4 } = require("uuid");
 const FormData = require("form-data");
-
 const app = express();
 const port = process.env.PORT || 3000;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -15,32 +14,38 @@ app.get("/ping", (req, res) => {
   res.json({ status: "ok" });
 });
 
-// פונקציה שממירה verbose_json ל-SRT עם פיצול לפי פסיקים/נקודות
-function convertVerboseJsonToSRT(segments) {
-  const lines = [];
-  let index = 1;
-
-  segments.forEach((seg) => {
-    const parts = seg.text.split(/(?<=[.,!?])\s+/); // ← פיצול לפי פסיקים וסיום משפט
-    const startBase = seg.start;
-    const endBase = seg.end;
-    const totalParts = parts.length;
-
-    parts.forEach((part, i) => {
-      const partStart = startBase + ((endBase - startBase) * i) / totalParts;
-      const partEnd = startBase + ((endBase - startBase) * (i + 1)) / totalParts;
-
-      const start = new Date(partStart * 1000).toISOString().substr(11, 12).replace(".", ",");
-      const end = new Date(partEnd * 1000).toISOString().substr(11, 12).replace(".", ",");
-
-      lines.push(`${index++}\n${start} --> ${end}\n${part.trim()}\n`);
-    });
-  });
-
-  return lines.join("\n");
+// פונקציה לפיצול טקסט לפי סימני פיסוק
+function splitTextByPunctuation(text) {
+  return text
+    .split(/(?<=[,\.\!?])\s+/)
+    .map(t => t.trim())
+    .filter(Boolean);
 }
 
-// שלב 1: יצירת כתוביות
+// המרה מ־verbose_json ל־SRT עם פיצול עדין לפי פיסוק
+function convertVerboseJsonToSRT(segments) {
+  const result = [];
+  segments.forEach((seg) => {
+    const splitTexts = splitTextByPunctuation(seg.text);
+    const segmentDuration = seg.end - seg.start;
+    const splitDuration = segmentDuration / splitTexts.length;
+
+    splitTexts.forEach((part, i) => {
+      const start = new Date((seg.start + i * splitDuration) * 1000)
+        .toISOString()
+        .substr(11, 12)
+        .replace('.', ',');
+      const end = new Date((seg.start + (i + 1) * splitDuration) * 1000)
+        .toISOString()
+        .substr(11, 12)
+        .replace('.', ',');
+      result.push(`${result.length + 1}\n${start} --> ${end}\n${part}\n`);
+    });
+  });
+  return result.join("\n");
+}
+
+// שלב 1: יצירת כתוביות מוידאו עם פלט מדויק
 app.post("/generate-subtitles", async (req, res) => {
   const { video_url } = req.body;
   const id = uuidv4();
@@ -49,7 +54,11 @@ app.post("/generate-subtitles", async (req, res) => {
 
   try {
     const video = await axios.get(video_url, { responseType: "stream" });
-    await new Promise((resolve) => video.data.pipe(fs.createWriteStream(videoPath)).on("finish", resolve));
+    const videoWriter = fs.createWriteStream(videoPath);
+    await new Promise((resolve) => {
+      video.data.pipe(videoWriter);
+      videoWriter.on("finish", resolve);
+    });
 
     const formData = new FormData();
     formData.append("file", fs.createReadStream(videoPath));
@@ -77,7 +86,7 @@ app.post("/generate-subtitles", async (req, res) => {
   }
 });
 
-// שלב 2: צריבת כתוביות
+// שלב 2: צריבת כתוביות עם עיצוב
 app.post("/burn-subtitles", async (req, res) => {
   const { video_url, srt_url, font_url, style } = req.body;
   const id = uuidv4();
@@ -106,11 +115,16 @@ app.post("/burn-subtitles", async (req, res) => {
     const cmd = `ffmpeg -i ${videoPath} -vf "subtitles=${srtPath}:force_style='${styleParams}'" -c:a copy ${outputPath}`;
 
     await new Promise((resolve, reject) => {
-      exec(cmd, (err) => (err ? reject(err) : resolve()));
+      exec(cmd, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
     });
 
     res.download(outputPath, (err) => {
-      if (err) console.error("Download error:", err);
+      if (err) {
+        console.error("Download error:", err);
+      }
       [videoPath, srtPath, fontPath, outputPath].forEach((p) => {
         if (fs.existsSync(p)) fs.unlinkSync(p);
       });
