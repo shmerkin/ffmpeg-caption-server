@@ -6,6 +6,7 @@ const fs = require("fs");
 const { exec } = require("child_process");
 const { v4: uuidv4 } = require("uuid");
 const FormData = require("form-data");
+
 const app = express();
 const port = process.env.PORT || 3000;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -16,7 +17,18 @@ app.get("/ping", (req, res) => {
   res.json({ status: "ok" });
 });
 
-// שלב 1: יצירת כתוביות מוידאו
+// Helper: Convert Whisper verbose_json to SRT format
+function convertVerboseJsonToSRT(segments) {
+  return segments
+    .map((seg, index) => {
+      const start = new Date(seg.start * 1000).toISOString().substr(11, 12).replace('.', ',');
+      const end = new Date(seg.end * 1000).toISOString().substr(11, 12).replace('.', ',');
+      return `${index + 1}\n${start} --> ${end}\n${seg.text.trim()}\n`;
+    })
+    .join("\n");
+}
+
+// Step 1: Generate subtitles (with verbose_json parsing)
 app.post("/generate-subtitles", async (req, res) => {
   const { video_url } = req.body;
   const id = uuidv4();
@@ -34,7 +46,7 @@ app.post("/generate-subtitles", async (req, res) => {
     const formData = new FormData();
     formData.append("file", fs.createReadStream(videoPath));
     formData.append("model", "whisper-1");
-    formData.append("response_format", "srt");
+    formData.append("response_format", "verbose_json");
 
     const whisperResponse = await axios.post(
       "https://api.openai.com/v1/audio/translations",
@@ -47,15 +59,19 @@ app.post("/generate-subtitles", async (req, res) => {
       }
     );
 
-    fs.writeFileSync(srtPath, whisperResponse.data);
-    res.sendFile(srtPath, { root: __dirname }); // תיקון: הגדרה עם root
+    const srtContent = convertVerboseJsonToSRT(whisperResponse.data.segments);
+    fs.writeFileSync(srtPath, srtContent);
+
+    res.sendFile(srtPath, { root: __dirname });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error generating subtitles" });
+  } finally {
+    if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
   }
 });
 
-// שלב 2: צריבת כתוביות עם עיצוב
+// Step 2: Burn subtitles with style
 app.post("/burn-subtitles", async (req, res) => {
   const { video_url, srt_url, font_url, style } = req.body;
   const id = uuidv4();
@@ -65,7 +81,6 @@ app.post("/burn-subtitles", async (req, res) => {
   const outputPath = `./${id}_captioned.mp4`;
 
   try {
-    // הורדה של שלושת הקבצים
     const [video, srt, font] = await Promise.all([
       axios.get(video_url, { responseType: "stream" }),
       axios.get(srt_url, { responseType: "stream" }),
@@ -79,7 +94,18 @@ app.post("/burn-subtitles", async (req, res) => {
     ]);
 
     const fontName = fontPath.split("/").pop().replace(".ttf", "");
-    const styleParams = style || `FontName=${fontName},FontSize=28,PrimaryColour=&H00FFFFFF,Alignment=2`;
+    const styleParams = style || [
+      `FontName=${fontName}`,
+      `FontSize=24`,
+      `PrimaryColour=&H00E0E0E0`,
+      `Outline=2`,
+      `OutlineColour=&H00000000`,
+      `Shadow=1`,
+      `BackColour=&H80000000`,
+      `BorderStyle=1`,
+      `MarginV=60`,
+      `Alignment=2`,
+    ].join(",");
 
     const cmd = `ffmpeg -i ${videoPath} -vf "subtitles=${srtPath}:force_style='${styleParams}'" -c:a copy ${outputPath}`;
 
@@ -90,22 +116,17 @@ app.post("/burn-subtitles", async (req, res) => {
       });
     });
 
-    res.download(outputPath, (err) => {
-      if (err) {
-        console.error("Download error:", err);
-      }
-      // מנקה את כל הקבצים רק אחרי השליחה
-      [videoPath, srtPath, fontPath, outputPath].forEach((p) => {
-        if (fs.existsSync(p)) fs.unlinkSync(p);
-      });
-    });
+    res.download(outputPath);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error burning subtitles" });
+  } finally {
+    [videoPath, srtPath, fontPath, outputPath].forEach((p) => {
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    });
   }
 });
 
 app.listen(port, () => {
   console.log(`🔥 FFmpeg Caption Server running on port ${port}`);
 });
-
