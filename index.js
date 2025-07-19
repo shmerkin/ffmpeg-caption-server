@@ -48,7 +48,7 @@ app.post("/generate-subtitles", async (req, res) => {
     );
 
     fs.writeFileSync(srtPath, whisperResponse.data);
-    res.sendFile(srtPath, { root: __dirname }); // ← תיקון חשוב כאן
+    res.sendFile(srtPath, { root: __dirname }); // תיקון: הגדרה עם root
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error generating subtitles" });
@@ -65,6 +65,7 @@ app.post("/burn-subtitles", async (req, res) => {
   const outputPath = `./${id}_captioned.mp4`;
 
   try {
+    // הורדה של שלושת הקבצים
     const [video, srt, font] = await Promise.all([
       axios.get(video_url, { responseType: "stream" }),
       axios.get(srt_url, { responseType: "stream" }),
@@ -89,17 +90,22 @@ app.post("/burn-subtitles", async (req, res) => {
       });
     });
 
-    res.download(outputPath);
+    res.download(outputPath, (err) => {
+      if (err) {
+        console.error("Download error:", err);
+      }
+      // מנקה את כל הקבצים רק אחרי השליחה
+      [videoPath, srtPath, fontPath, outputPath].forEach((p) => {
+        if (fs.existsSync(p)) fs.unlinkSync(p);
+      });
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error burning subtitles" });
-  } finally {
-    [videoPath, srtPath, fontPath, outputPath].forEach((p) => {
-      if (fs.existsSync(p)) fs.unlinkSync(p);
-    });
   }
 });
 
 app.listen(port, () => {
   console.log(`🔥 FFmpeg Caption Server running on port ${port}`);
 });
+
