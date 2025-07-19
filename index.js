@@ -16,7 +16,7 @@ app.get("/ping", (req, res) => {
   res.json({ status: "ok" });
 });
 
-// שלב 1: הפקת כתוביות בלבד
+// שלב 1: יצירת כתוביות מוידאו
 app.post("/generate-subtitles", async (req, res) => {
   const { video_url } = req.body;
   const id = uuidv4();
@@ -48,16 +48,14 @@ app.post("/generate-subtitles", async (req, res) => {
     );
 
     fs.writeFileSync(srtPath, whisperResponse.data);
-    res.sendFile(srtPath);
+    res.sendFile(srtPath, { root: __dirname }); // ← תיקון חשוב כאן
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error generating subtitles" });
-  } finally {
-    if (fs.existsSync(videoPath)) fs.unlinkSync(videoPath);
   }
 });
 
-// שלב 2: צריבה של כתוביות עם שליטה על מיקום, צבע ופונט
+// שלב 2: צריבת כתוביות עם עיצוב
 app.post("/burn-subtitles", async (req, res) => {
   const { video_url, srt_url, font_url, style } = req.body;
   const id = uuidv4();
@@ -67,21 +65,22 @@ app.post("/burn-subtitles", async (req, res) => {
   const outputPath = `./${id}_captioned.mp4`;
 
   try {
-    // הורדת קבצים
     const [video, srt, font] = await Promise.all([
       axios.get(video_url, { responseType: "stream" }),
       axios.get(srt_url, { responseType: "stream" }),
-      axios.get(font_url, { responseType: "stream" })
+      axios.get(font_url, { responseType: "stream" }),
     ]);
 
     await Promise.all([
       new Promise((resolve) => video.data.pipe(fs.createWriteStream(videoPath)).on("finish", resolve)),
       new Promise((resolve) => srt.data.pipe(fs.createWriteStream(srtPath)).on("finish", resolve)),
-      new Promise((resolve) => font.data.pipe(fs.createWriteStream(fontPath)).on("finish", resolve))
+      new Promise((resolve) => font.data.pipe(fs.createWriteStream(fontPath)).on("finish", resolve)),
     ]);
 
-    const styleParams = style || "FontName=Arial,FontSize=28,PrimaryColour=&H00FFFFFF,Alignment=2";
-    const cmd = `ffmpeg -i ${videoPath} -vf "subtitles=${srtPath}:fontsdir=./:force_style='${styleParams}'" -c:a copy ${outputPath}`;
+    const fontName = fontPath.split("/").pop().replace(".ttf", "");
+    const styleParams = style || `FontName=${fontName},FontSize=28,PrimaryColour=&H00FFFFFF,Alignment=2`;
+
+    const cmd = `ffmpeg -i ${videoPath} -vf "subtitles=${srtPath}:force_style='${styleParams}'" -c:a copy ${outputPath}`;
 
     await new Promise((resolve, reject) => {
       exec(cmd, (err) => {
@@ -102,5 +101,5 @@ app.post("/burn-subtitles", async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+  console.log(`🔥 FFmpeg Caption Server running on port ${port}`);
 });
